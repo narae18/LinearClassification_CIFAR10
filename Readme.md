@@ -1,179 +1,232 @@
 # Linear Classification on CIFAR-10
 
-Implementation of two linear classifiers — **SVM (Hinge Loss)** and **Softmax (Cross-Entropy Loss)** — trained from scratch using NumPy on the CIFAR-10 dataset.
+This project implements two linear classifiers from scratch using NumPy and evaluates their performance on the CIFAR-10 dataset:
+
+* Linear SVM (Hinge Loss)
+* Softmax Classifier (Cross-Entropy Loss)
+
+The project includes data preprocessing, model training with Stochastic Gradient Descent (SGD), performance evaluation, and visualization of learning results.
 
 ---
 
-## Overview
+## Project Structure
 
-This assignment implements linear classification, where the score function is defined as:
-
-```
-f(x, W) = Wx
-```
-
-where `x` is a flattened image vector and `W` is the learned weight matrix. Two different loss functions are explored and compared.
-
----
-
-## File Structure
-
-```
-├── linear_classification.py   # Main implementation
-├── README.md                  # This file
-├── loss_curve.png             # Generated after running
-├── weight_templates.png       # Generated after running
-└── data/
-    └── cifar-10-batches-py/   # CIFAR-10 dataset (download separately)
-        ├── data_batch_1
-        ├── data_batch_2
-        ├── data_batch_3
-        ├── data_batch_4
-        ├── data_batch_5
-        └── test_batch
+```text
+LINEARCLASSIFICATION_CIFAR10
+│
+├── data/
+│   └── cifar-10-batches-py/
+│
+├── linear_classification.py
+├── loss_curve.png
+├── weight_templates.png
+├── confusion_matrix.png
+└── README.md
 ```
 
 ---
 
 ## Dataset
 
-**CIFAR-10** consists of 60,000 32×32 color images across 10 classes:
+This project uses the CIFAR-10 dataset.
 
-`airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck`
+### Dataset Information
 
-- Training set: 50,000 images
-- Test set: 10,000 images
-- Each image is flattened to a 3,072-dimensional vector (32 × 32 × 3)
+* 50,000 training images
+* 10,000 test images
+* 10 object categories
+* Image size: 32 × 32 RGB
 
-### Download
+Classes:
 
-```bash
-wget https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz
-tar -xzvf cifar-10-python.tar.gz -C data/
+1. Airplane
+2. Automobile
+3. Bird
+4. Cat
+5. Deer
+6. Dog
+7. Frog
+8. Horse
+9. Ship
+10. Truck
+
+Dataset Download:
+
+https://www.cs.toronto.edu/~kriz/cifar.html
+
+---
+
+## Data Preprocessing
+
+Before training, the following preprocessing steps are applied:
+
+### 1. Zero-Centering
+
+The mean pixel value of the training set is computed and subtracted from both training and test data.
+
+```python
+mean = X_train.mean(axis=0)
+X_train -= mean
+X_test -= mean
+```
+
+### 2. Bias Trick
+
+A column of ones is appended to each sample to incorporate the bias term into the weight matrix.
+
+```python
+X_train = np.hstack([X_train, np.ones((X_train.shape[0], 1))])
 ```
 
 ---
 
-## Preprocessing
+## Implemented Models
 
-1. **Zero-centering** — subtract the per-pixel mean computed from the training set
-2. **Bias trick** — append a constant `1` to each input vector, making the weight matrix absorb the bias term (input dimension becomes 3,073)
+### Linear SVM
 
----
+The Linear SVM classifier uses the multiclass Hinge Loss.
 
-## Loss Functions
+Features:
 
-### 1. SVM — Multiclass Hinge Loss
-
-For each training example, the hinge loss is:
-
-```
-L_i = Σ_{j ≠ y_i} max(0, s_j - s_{y_i} + Δ)
-```
-
-where `Δ = 1` (margin), `s_j` is the score for class `j`, and `y_i` is the correct class.
-
-The total loss with L2 regularization:
-
-```
-L = (1/N) Σ L_i + λ * ||W||²
-```
-
-### 2. Softmax — Cross-Entropy Loss
-
-Scores are converted to probabilities via the softmax function:
-
-```
-P(y = k | x) = exp(s_k) / Σ_j exp(s_j)
-```
-
-The cross-entropy loss:
-
-```
-L_i = -log P(y = y_i | x_i)
-```
-
-The total loss with L2 regularization:
-
-```
-L = (1/N) Σ L_i + λ * ||W||²
-```
-
-> Numerical stability: the maximum score is subtracted before exponentiation to prevent overflow.
+* Margin-based classification
+* L2 regularization
+* Mini-batch SGD optimization
 
 ---
 
-## Optimization
+### Softmax Classifier
 
-Mini-batch **Stochastic Gradient Descent (SGD)**:
+The Softmax classifier converts class scores into probabilities and optimizes Cross-Entropy Loss.
 
-```
-W ← W - α * ∇_W L
-```
+Features:
 
-| Hyperparameter | SVM | Softmax |
-|---|---|---|
-| Learning rate (α) | 5e-7 | 1e-6 |
-| Regularization (λ) | 1e-4 | 1e-4 |
-| Epochs | 2,000 | 2,000 |
-| Batch size | 512 | 512 |
+* Probability-based classification
+* Numerically stable implementation
+* L2 regularization
+* Mini-batch SGD optimization
 
 ---
 
-## Requirements
+## Training Configuration
 
-```bash
-pip install numpy matplotlib
-```
-
-- Python 3.7+
-- NumPy
-- Matplotlib
-
----
-
-## How to Run
-
-```bash
-python linear_classification.py
-```
-
-The script will:
-1. Load and preprocess the CIFAR-10 dataset
-2. Train the SVM classifier and print loss every 20 epochs
-3. Train the Softmax classifier and print loss every 20 epochs
-4. Report train/test accuracy for both models
-5. Save `loss_curve.png` — training loss curves side by side
-6. Save `weight_templates.png` — learned weight templates visualized as images
+| Parameter      | SVM  | Softmax |
+| -------------- | ---- | ------- |
+| Learning Rate  | 5e-7 | 1e-6    |
+| Regularization | 1e-4 | 1e-4    |
+| Epochs         | 2000 | 2000    |
+| Batch Size     | 512  | 512     |
 
 ---
 
 ## Results
 
-| Model | Train Accuracy | Test Accuracy |
-|---|---|---|
-| SVM (Hinge Loss) | 36.86% | **34.09%** |
-| Softmax (Cross-Entropy) | 36.38% | **34.73%** |
-
-Both models converge smoothly over 2,000 epochs. Softmax slightly outperforms SVM on the test set, which is consistent with the probabilistic nature of cross-entropy loss providing a softer and more informative gradient signal during training.
-
 ### Loss Curves
 
-![Loss Curves](loss_curve.png)
+Training losses are recorded and visualized throughout the optimization process.
 
-Both loss curves show rapid convergence in the early epochs and stabilize after approximately 500 epochs, confirming that the hyperparameters are well-tuned.
-
-### Weight Templates
-
-![Weight Templates](weight_templates.png)
-
-The learned weight templates appear noisy, which is expected for linear classifiers on CIFAR-10. Since each class is represented by a single weight vector, the model averages over all intra-class variations (e.g., different poses, backgrounds, lighting), resulting in blurry prototype-like templates. This is a fundamental limitation of linear classification rather than an implementation issue.
+<p align="center">
+  <img src="loss_curve.png" width="700">
+</p>
 
 ---
 
-## Implementation Notes
+### Weight Templates
 
-- All computations are done with **NumPy only** (no deep learning frameworks)
-- Gradients are derived and implemented analytically
-- The bias term is handled via the **bias trick** rather than a separate parameter
-- Both loss functions share the same SGD training loop for a fair comparison
+The learned weight vectors are reshaped into image form to visualize what each classifier learns for every class.
+
+<p align="center">
+  <img src="weight_templates.png" width="700">
+</p>
+
+---
+
+### Confusion Matrices
+
+Confusion matrices are generated to compare classification performance across all classes.
+
+<p align="center">
+  <img src="confusion_matrix.png" width="700">
+</p>
+
+---
+
+## Main Functions
+
+### Data Loading
+
+* `load_batch()` – Loads a single CIFAR-10 batch file
+* `load_cifar10()` – Loads the entire CIFAR-10 dataset
+
+### Preprocessing
+
+* `preprocess()` – Performs zero-centering and bias augmentation
+
+### Loss Functions
+
+* `svm_loss()` – Computes multiclass SVM loss and gradient
+* `softmax_loss()` – Computes Softmax Cross-Entropy loss and gradient
+
+### Training
+
+* `train()` – Trains a model using Mini-Batch SGD
+
+### Evaluation
+
+* `get_accuracy()` – Computes classification accuracy
+* `get_predictions()` – Generates predicted labels
+
+### Visualization
+
+* `plot_loss()` – Plots training loss curves
+* `plot_weight_templates()` – Visualizes learned weight templates
+* `plot_confusion_matrices()` – Generates confusion matrices
+
+---
+
+## Workflow
+
+```text
+Load CIFAR-10 Dataset
+          ↓
+Data Preprocessing
+          ↓
+Train Linear SVM
+          ↓
+Evaluate Performance
+          ↓
+Train Softmax Classifier
+          ↓
+Evaluate Performance
+          ↓
+Generate Visualizations
+```
+
+---
+
+## Requirements
+
+Install the required packages:
+
+```bash
+pip install numpy matplotlib scikit-learn
+```
+
+---
+
+## Run
+
+```bash
+python linear_classification.py
+```
+
+Make sure the CIFAR-10 dataset is located at:
+
+```text
+./data/cifar-10-batches-py
+```
+
+---
+
+## Conclusion
+
+This project demonstrates how linear classifiers can be implemented from scratch using NumPy. By comparing Linear SVM and Softmax classifiers on CIFAR-10, we can better understand the differences between margin-based and probability-based classification approaches, as well as the impact of optimization and regularization on model performance.

@@ -2,154 +2,177 @@ import numpy as np
 import pickle
 import os
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
-# ────────────────────────────────────────────────
-# CIFAR-10 데이터 로드
-# ────────────────────────────────────────────────
+# ============================================================
+# CIFAR-10 데이터 로드 함수
+# ============================================================
 
-def 배치_로드(파일경로):
-    with open(파일경로, 'rb') as f:
-        배치 = pickle.load(f, encoding='bytes')
-    X = 배치[b'data'].astype(np.float64)       # (10000, 3072)
-    y = np.array(배치[b'labels'])               # (10000,)
+def load_batch(file_path):
+    """
+    CIFAR-10 배치 파일 하나를 불러와서 이미지와 레이블을 반환합니다.
+    """
+    with open(file_path, 'rb') as f:
+        batch = pickle.load(f, encoding='bytes')
+    X = batch[b'data'].astype(np.float64)       # (10000, 3072)
+    y = np.array(batch[b'labels'])               # (10000,)
     return X, y
 
 
-def CIFAR10_로드(데이터_폴더):
+def load_cifar10(data_dir):
     """
-    CIFAR-10 데이터셋 로드
+    CIFAR-10 전체 데이터셋(훈련 5개 배치 + 테스트 1개 배치)을 불러옵니다.
     https://www.cs.toronto.edu/~kriz/cifar.html 에서 다운로드 후
-    cifar-10-batches-py 폴더를 data/ 하위에 위치시키세요.
+    cifar-10-batches-py 폴더를 지정된 경로에 위치시키세요.
     """
-    X_목록, y_목록 = [], []
+    X_train_list, y_train_list = [], []
     for i in range(1, 6):
-        경로 = os.path.join(데이터_폴더, f'data_batch_{i}')
-        X, y = 배치_로드(경로)
-        X_목록.append(X)
-        y_목록.append(y)
+        path = os.path.join(data_dir, f'data_batch_{i}')
+        X, y = load_batch(path)
+        X_train_list.append(X)
+        y_train_list.append(y)
 
-    X_훈련 = np.concatenate(X_목록)   # (50000, 3072)
-    y_훈련 = np.concatenate(y_목록)   # (50000,)
+    X_train = np.concatenate(X_train_list)   # (50000, 3072)
+    y_train = np.concatenate(y_train_list)   # (50000,)
 
-    X_테스트, y_테스트 = 배치_로드(os.path.join(데이터_폴더, 'test_batch'))
+    X_test, y_test = load_batch(os.path.join(data_dir, 'test_batch'))
 
-    return X_훈련, y_훈련, X_테스트, y_테스트
-
-
-def 전처리(X_훈련, X_테스트):
-    # 픽셀값 평균 빼기 (zero-centering)
-    평균 = X_훈련.mean(axis=0)
-    X_훈련 = X_훈련 - 평균
-    X_테스트 = X_테스트 - 평균
-
-    # bias trick: 마지막 열에 1 추가 → (N, 3073)
-    X_훈련 = np.hstack([X_훈련, np.ones((X_훈련.shape[0], 1))])
-    X_테스트 = np.hstack([X_테스트, np.ones((X_테스트.shape[0], 1))])
-
-    return X_훈련, X_테스트
+    return X_train, y_train, X_test, y_test
 
 
-# ────────────────────────────────────────────────
-# SVM (Hinge Loss)
-# ────────────────────────────────────────────────
-
-def svm_손실(W, X, y, reg):
+def preprocess(X_train, X_test):
     """
-    멀티클래스 SVM 손실 + L2 정규화
+    픽셀값을 평균으로 정규화(Zero-centering)하고, bias trick을 위해 1열을 추가합니다.
+    """
+    # 픽셀값 평균 빼기
+    mean = X_train.mean(axis=0)
+    X_train = X_train - mean
+    X_test = X_test - mean
+
+    # bias trick: 각 샘플 끝에 1 추가 -> (N, 3073)
+    X_train = np.hstack([X_train, np.ones((X_train.shape[0], 1))])
+    X_test = np.hstack([X_test, np.ones((X_test.shape[0], 1))])
+
+    return X_train, X_test
+
+
+# ============================================================
+# SVM 분류기 (Hinge Loss)
+# ============================================================
+
+def svm_loss(W, X, y, reg):
+    """
+    멀티클래스 SVM 손실(Hinge Loss)과 기울기(Gradient)를 L2 정규화와 함께 계산합니다.
     W: (D, C)  X: (N, D)  y: (N,)
-    반환: 손실값, 기울기
+    반환값: loss, dW
     """
     N = X.shape[0]
-    점수 = X @ W                                    # (N, C)
-    정답_점수 = 점수[np.arange(N), y].reshape(-1, 1)  # (N, 1)
-    마진 = np.maximum(0, 점수 - 정답_점수 + 1)         # delta=1
-    마진[np.arange(N), y] = 0                        # 정답 클래스 제외
+    scores = X @ W                                    # (N, C)
+    correct_scores = scores[np.arange(N), y].reshape(-1, 1)  # (N, 1)
+    margins = np.maximum(0, scores - correct_scores + 1)         # delta=1 마진 설정
+    margins[np.arange(N), y] = 0                        # 정답 클래스는 손실 계산에서 제외
 
-    손실 = 마진.sum() / N + reg * np.sum(W * W)
+    loss = margins.sum() / N + reg * np.sum(W * W)
 
-    # 기울기 계산
-    마스크 = (마진 > 0).astype(float)
-    마스크[np.arange(N), y] = -마스크.sum(axis=1)
-    dW = X.T @ 마스크 / N + 2 * reg * W
+    # 기울기(경사) 계산
+    mask = (margins > 0).astype(float)
+    mask[np.arange(N), y] = -mask.sum(axis=1)
+    dW = X.T @ mask / N + 2 * reg * W
 
-    return 손실, dW
+    return loss, dW
 
 
-# ────────────────────────────────────────────────
-# Softmax (Cross-Entropy Loss)
-# ────────────────────────────────────────────────
+# ============================================================
+# Softmax 분류기 (Cross-Entropy Loss)
+# ============================================================
 
-def softmax_손실(W, X, y, reg):
+def softmax_loss(W, X, y, reg):
     """
-    Softmax Cross-Entropy 손실 + L2 정규화
+    Softmax Cross-Entropy 손실과 기울기를 L2 정규화와 함께 계산합니다.
     W: (D, C)  X: (N, D)  y: (N,)
-    반환: 손실값, 기울기
+    반환값: loss, dW
     """
     N = X.shape[0]
-    점수 = X @ W                                    # (N, C)
-    점수 -= 점수.max(axis=1, keepdims=True)          # 수치 안정성
+    scores = X @ W                                    # (N, C)
+    scores -= scores.max(axis=1, keepdims=True)          # 지수 오버플로우 방지를 위한 수치 안정성 확보
 
-    exp_점수 = np.exp(점수)
-    확률 = exp_점수 / exp_점수.sum(axis=1, keepdims=True)  # (N, C)
+    exp_scores = np.exp(scores)
+    probs = exp_scores / exp_scores.sum(axis=1, keepdims=True)  # (N, C) 확률 분산 변환
 
-    손실 = -np.log(확률[np.arange(N), y]).sum() / N + reg * np.sum(W * W)
+    loss = -np.log(probs[np.arange(N), y]).sum() / N + reg * np.sum(W * W)
 
-    # 기울기 계산
-    dP = 확률.copy()
+    # 기울기(경사) 계산
+    dP = probs.copy()
     dP[np.arange(N), y] -= 1
     dW = X.T @ dP / N + 2 * reg * W
 
-    return 손실, dW
+    return loss, dW
 
 
-# ────────────────────────────────────────────────
-# SGD 학습기
-# ────────────────────────────────────────────────
+# ============================================================
+# SGD 학습기 (Stochastic Gradient Descent)
+# ============================================================
 
-def 학습(손실함수, X, y, 학습률=1e-3, reg=1e-5,
-         에폭=200, 배치크기=256, 출력간격=20):
+def train(loss_fn, X, y, learning_rate=1e-3, reg=1e-5,
+          epochs=200, batch_size=256, print_every=20):
+    """
+    미니배치 확률적 경사하강법(SGD)을 사용하여 분류기를 학습시킵니다.
+    """
     N, D = X.shape
     C = y.max() + 1
     W = 0.001 * np.random.randn(D, C)
 
-    손실_기록 = []
+    loss_history = []
 
-    for 에폭번호 in range(1, 에폭 + 1):
-        # 미니배치 샘플링
-        인덱스 = np.random.choice(N, 배치크기, replace=False)
-        X_배치 = X[인덱스]
-        y_배치 = y[인덱스]
+    for epoch in range(1, epochs + 1):
+        # 무작위 미니배치 샘플링
+        indices = np.random.choice(N, batch_size, replace=False)
+        X_batch = X[indices]
+        y_batch = y[indices]
 
-        손실값, dW = 손실함수(W, X_배치, y_배치, reg)
-        W -= 학습률 * dW
-        손실_기록.append(손실값)
+        loss_val, dW = loss_fn(W, X_batch, y_batch, reg)
+        W -= learning_rate * dW
+        loss_history.append(loss_val)
 
-        if 에폭번호 % 출력간격 == 0:
-            print(f'  에폭 {에폭번호:>4d} | 손실: {손실값:.4f}')
+        if epoch % print_every == 0:
+            print(f'  에폭 {epoch:>4d} | 손실(Loss): {loss_val:.4f}')
 
-    return W, 손실_기록
-
-
-def 정확도(W, X, y):
-    예측 = (X @ W).argmax(axis=1)
-    return (예측 == y).mean()
+    return W, loss_history
 
 
-# ────────────────────────────────────────────────
-# 시각화
-# ────────────────────────────────────────────────
+def get_accuracy(W, X, y):
+    """
+    최종 모델의 예측 분류 정확도를 계산합니다.
+    """
+    predictions = (X @ W).argmax(axis=1)
+    return (predictions == y).mean()
 
-def 손실_그래프(svm_기록, softmax_기록):
+
+def get_predictions(W, X):
+    """
+    혼동 행렬(Confusion Matrix) 계산을 위해 테스트 데이터의 예측 레이블을 반환합니다.
+    """
+    return (X @ W).argmax(axis=1)
+
+
+# ============================================================
+# 시각화 함수 영역
+# ============================================================
+
+def plot_loss(svm_history, softmax_history):
+    """
+    SVM과 Softmax의 학습 손실 곡선을 그래프로 그리고 저장합니다.
+    """
     plt.figure(figsize=(10, 4))
     plt.subplot(1, 2, 1)
-    plt.plot(svm_기록)
+    plt.plot(svm_history)
     plt.title('SVM Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
 
     plt.subplot(1, 2, 2)
-    plt.plot(softmax_기록, color='orange')
+    plt.plot(softmax_history, color='orange')
     plt.title('Softmax Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
@@ -157,92 +180,135 @@ def 손실_그래프(svm_기록, softmax_기록):
     plt.tight_layout()
     plt.savefig('loss_curve.png', dpi=100)
     plt.show()
-    print('Loss curve saved: loss_curve.png')
+    print('손실 곡선 그래프 저장 완료: loss_curve.png')
 
 
-def 가중치_시각화(W_svm, W_softmax):
-    클래스명 = ['airplane','automobile','bird','cat','deer',
-               'dog','frog','horse','ship','truck']
+def plot_weight_templates(W_svm, W_softmax):
+    """
+    학습된 가중치 행렬 W를 클래스별 가중치 템플릿 이미지로 시각화하고 저장합니다.
+    """
+    class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+                   'dog', 'frog', 'horse', 'ship', 'truck']
 
     fig, axes = plt.subplots(2, 10, figsize=(15, 4))
     for i in range(10):
-        for 행, W, 제목 in zip([0, 1], [W_svm, W_softmax], ['SVM', 'Softmax']):
-            템플릿 = W[:-1, i].reshape(3, 32, 32).transpose(1, 2, 0)
-            # 시각화를 위해 [0, 255] 범위로 정규화
-            템플릿 -= 템플릿.min()
-            최대값 = 템플릿.max()
-            if 최대값 > 0:
-                템플릿 /= 최대값
-            axes[행, i].imshow(템플릿)
-            axes[행, i].axis('off')
-            if 행 == 0:
-                axes[행, i].set_title(클래스명[i], fontsize=8)
-        axes[0, 0].set_ylabel('SVM', fontsize=9)
-        axes[1, 0].set_ylabel('Softmax', fontsize=9)
+        for row, W in zip([0, 1], [W_svm, W_softmax]):
+            template = W[:-1, i].reshape(3, 32, 32).transpose(1, 2, 0)
+            # 시각화를 위해 픽셀값을 [0, 1] 범위로 이미지 정규화
+            template -= template.min()
+            max_val = template.max()
+            if max_val > 0:
+                template /= max_val
+            axes[row, i].imshow(template)
+            axes[row, i].axis('off')
+            if row == 0:
+                axes[row, i].set_title(class_names[i], fontsize=8)
 
     plt.suptitle('Learned Weight Templates')
     plt.tight_layout()
     plt.savefig('weight_templates.png', dpi=100)
     plt.show()
-    print('Weight templates saved: weight_templates.png')
+    print('가중치 템플릿 이미지 저장 완료: weight_templates.png')
 
 
-# ────────────────────────────────────────────────
-# 메인 실행
-# ────────────────────────────────────────────────
+def plot_confusion_matrices(y_true, svm_pred, softmax_pred):
+    """
+    두 분류기의 실제 정답과 예측값을 바탕으로 혼동 행렬(Confusion Matrix)을 시각화하고 저장합니다.
+    """
+    class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+                   'dog', 'frog', 'horse', 'ship', 'truck']
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    
+    # SVM 혼동 행렬 시각화
+    cm_svm = confusion_matrix(y_true, svm_pred)
+    disp_svm = ConfusionMatrixDisplay(confusion_matrix=cm_svm, display_labels=class_names)
+    disp_svm.plot(cmap=plt.cm.Blues, ax=axes[0], xticks_rotation=45)
+    axes[0].set_title('SVM Confusion Matrix')
+    
+    # Softmax 혼동 행렬 시각화
+    cm_softmax = confusion_matrix(y_true, softmax_pred)
+    disp_softmax = ConfusionMatrixDisplay(confusion_matrix=cm_softmax, display_labels=class_names)
+    disp_softmax.plot(cmap=plt.cm.Oranges, ax=axes[1], xticks_rotation=45)
+    axes[1].set_title('Softmax Confusion Matrix')
+    
+    plt.suptitle('Confusion Matrices Comparison')
+    plt.tight_layout()
+    plt.savefig('confusion_matrix.png', dpi=100)
+    plt.show()
+    print('혼동 행렬(Confusion Matrix) 그래프 저장 완료: confusion_matrix.png')
+
+
+# ============================================================
+# 메인 실행부
+# ============================================================
 
 if __name__ == '__main__':
-    # CIFAR-10 경로 설정 (다운로드 후 경로 수정)
-    데이터_경로 = './data/cifar-10-batches-py'
+    # CIFAR-10 데이터 세트 폴더 경로 설정
+    DATA_DIR = './data/cifar-10-batches-py'
 
-    print('=== CIFAR-10 데이터 로드 ===')
-    X_훈련, y_훈련, X_테스트, y_테스트 = CIFAR10_로드(데이터_경로)
-    print(f'훈련: {X_훈련.shape}, 테스트: {X_테스트.shape}')
+    print('=== CIFAR-10 데이터셋 로드 시작 ===')
+    X_train, y_train, X_test, y_test = load_cifar10(DATA_DIR)
+    print(f'  훈련 데이터 세트 크기: {X_train.shape}, 테스트 데이터 세트 크기: {X_test.shape}')
 
-    # 소규모로 빠르게 실험하려면 아래 주석 해제
-    # X_훈련, y_훈련 = X_훈련[:5000], y_훈련[:5000]
+    # 빠른 실험을 위해 데이터 샘플 일부만 활용하고자 하는 경우 아래 2줄의 주석을 해제하세요.
+    # X_train, y_train = X_train[:5000], y_train[:5000]
 
-    X_훈련, X_테스트 = 전처리(X_훈련, X_테스트)
+    X_train, X_test = preprocess(X_train, X_test)
 
-    # ── SVM ──────────────────────────────────────
-    print('\n=== SVM (Hinge Loss) 학습 ===')
+    # --------------------------------------------------------
+    # SVM 분류기 학습 실행
+    # --------------------------------------------------------
+    print('\n=== SVM (Hinge Loss) 모델 학습 시작 ===')
     np.random.seed(42)
-    W_svm, svm_기록 = 학습(
-        손실함수=svm_손실,
-        X=X_훈련,
-        y=y_훈련,
-        학습률=5e-7,
+    W_svm, svm_history = train(
+        loss_fn=svm_loss,
+        X=X_train,
+        y=y_train,
+        learning_rate=5e-7,
         reg=1e-4,
-        에폭=2000,
-        배치크기=512
+        epochs=2000,
+        batch_size=512
     )
-    svm_훈련_정확도 = 정확도(W_svm, X_훈련, y_훈련)
-    svm_테스트_정확도 = 정확도(W_svm, X_테스트, y_테스트)
-    print(f'SVM  훈련 정확도: {svm_훈련_정확도:.4f}')
-    print(f'SVM  테스트 정확도: {svm_테스트_정확도:.4f}')
+    svm_train_acc = get_accuracy(W_svm, X_train, y_train)
+    svm_test_acc = get_accuracy(W_svm, X_test, y_test)
+    print(f'  SVM 훈련 데이터 정확도: {svm_train_acc:.4f}')
+    print(f'  SVM 테스트 데이터 정확도: {svm_test_acc:.4f}')
 
-    # ── Softmax ──────────────────────────────────
-    print('\n=== Softmax (Cross-Entropy) 학습 ===')
+    # --------------------------------------------------------
+    # Softmax 분류기 학습 실행
+    # --------------------------------------------------------
+    print('\n=== Softmax (Cross-Entropy) 모델 학습 시작 ===')
     np.random.seed(42)
-    W_softmax, softmax_기록 = 학습(
-        손실함수=softmax_손실,
-        X=X_훈련,
-        y=y_훈련,
-        학습률=1e-6,
+    W_softmax, softmax_history = train(
+        loss_fn=softmax_loss,
+        X=X_train,
+        y=y_train,
+        learning_rate=1e-6,
         reg=1e-4,
-        에폭=2000,
-        배치크기=512
+        epochs=2000,
+        batch_size=512
     )
-    softmax_훈련_정확도 = 정확도(W_softmax, X_훈련, y_훈련)
-    softmax_테스트_정확도 = 정확도(W_softmax, X_테스트, y_테스트)
-    print(f'Softmax  훈련 정확도: {softmax_훈련_정확도:.4f}')
-    print(f'Softmax  테스트 정확도: {softmax_테스트_정확도:.4f}')
+    softmax_train_acc = get_accuracy(W_softmax, X_train, y_train)
+    softmax_test_acc = get_accuracy(W_softmax, X_test, y_test)
+    print(f'  Softmax 훈련 데이터 정확도: {softmax_train_acc:.4f}')
+    print(f'  Softmax 테스트 데이터 정확도: {softmax_test_acc:.4f}')
 
-    # ── 결과 요약 ─────────────────────────────────
-    print('\n========== 최종 결과 ==========')
-    print(f'SVM      테스트 정확도: {svm_테스트_정확도*100:.2f}%')
-    print(f'Softmax  테스트 정확도: {softmax_테스트_정확도*100:.2f}%')
+    # --------------------------------------------------------
+    # 최종 학습 성능 비교 출력
+    # --------------------------------------------------------
+    print('\n========== 최종 실험 결과 요약 ==========')
+    print(f'  SVM      | 최종 테스트 정확도: {svm_test_acc*100:.2f}%')
+    print(f'  Softmax  | 최종 테스트 정확도: {softmax_test_acc*100:.2f}%')
+    print('===========================================')
 
-    # ── 시각화 ────────────────────────────────────
-    손실_그래프(svm_기록, softmax_기록)
-    가중치_시각화(W_svm, W_softmax)
+    # 혼동 행렬 데이터 가공용 오답 예측 레이블 추출
+    svm_test_preds = get_predictions(W_svm, X_test)
+    softmax_test_preds = get_predictions(W_softmax, X_test)
+
+    # --------------------------------------------------------
+    # 결과 그래프 시각화 및 파일 디스크 저장
+    # --------------------------------------------------------
+    plot_loss(svm_history, softmax_history)
+    plot_weight_templates(W_svm, W_softmax)
+    plot_confusion_matrices(y_test, svm_test_preds, softmax_test_preds)
